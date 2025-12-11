@@ -65,6 +65,7 @@ class DB(Enum):
     SeekDB = "SeekDB"
     VolcMySQL = "VolcMySQL"
     Adbpg = "AnalyticDB for PostgreSQL"
+    Datalayers = "Datalayers"
 
     @property
     def init_cls(self) -> type[VectorDB]:  # noqa: PLR0911, PLR0912, C901, PLR0915
@@ -153,6 +154,10 @@ class DB(Enum):
             from .clickhouse.clickhouse import Clickhouse
 
             return Clickhouse
+        if self == DB.Datalayers:
+            from .datalayers.datalayers import Datalayers
+
+            return Datalayers
 
         if self == DB.AlloyDB:
             from .alloydb.alloydb import AlloyDB
@@ -371,6 +376,10 @@ class DB(Enum):
             from .clickhouse.config import ClickhouseConfig
 
             return ClickhouseConfig
+        if self == DB.Datalayers:
+            from .datalayers.config import DatalayersConfig
+
+            return DatalayersConfig
 
         if self == DB.AlloyDB:
             from .alloydb.config import AlloyDBConfig
@@ -568,6 +577,10 @@ class DB(Enum):
             from .clickhouse.config import ClickhouseHNSWConfig
 
             return ClickhouseHNSWConfig
+        if self == DB.Datalayers:
+            from .datalayers.config import DatalayersIndexConfig
+
+            return DatalayersIndexConfig
 
         if self == DB.PgVectorScale:
             from .pgvectorscale.config import _pgvectorscale_case_config
