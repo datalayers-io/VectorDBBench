@@ -28,6 +28,7 @@ class IndexType(str, Enum):
     IVFPQ = "IVF_PQ"
     IVFSQ8 = "IVF_SQ8"
     IVF_RABITQ = "IVF_RABITQ"
+    IVF_HNSW = "IVF_HNSW"
     Flat = "FLAT"
     AUTOINDEX = "AUTOINDEX"
     ES_HNSW = "hnsw"

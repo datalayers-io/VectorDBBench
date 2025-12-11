@@ -1999,6 +1999,29 @@ AliyunOpenSearchPerformanceConfig = [
     CaseConfigParamInput_EF_SEARCH_AliyunOpensearch,
 ]
 
+CaseConfigParamInput_IndexType_Datalayers = CaseConfigInput(
+    label=CaseConfigParamType.index,
+    displayLabel="Index type",
+    inputHelp="Index type to build",
+    inputType=InputType.Option,
+    inputConfig={
+        "options": [
+            IndexType.HNSW.value,
+            IndexType.Flat.value,
+            IndexType.IVFFlat.value,
+            IndexType.IVFPQ.value,
+            IndexType.IVF_RABITQ.value,
+        ],
+    },
+)
+
+DatalayersLoadConfig = [
+    CaseConfigParamInput_IndexType_Datalayers,
+]
+DatalayersPerformanceConfig = [
+    CaseConfigParamInput_IndexType_Datalayers,
+]
+
 PgVectorLoadingConfig = [
     CaseConfigParamInput_IndexType_PgVector,
     CaseConfigParamInput_Lists_PgVector,
@@ -2401,6 +2424,10 @@ CASE_CONFIG_MAP = {
     DB.AlloyDB: {
         CaseLabel.Load: AlloyDBLoadConfig,
         CaseLabel.Performance: AlloyDBPerformanceConfig,
+    },
+    DB.Datalayers: {
+        CaseLabel.Load: DatalayersLoadConfig,
+        CaseLabel.Performance: DatalayersPerformanceConfig,
     },
     DB.AliyunElasticsearch: {
         CaseLabel.Load: AliyunElasticsearchLoadingConfig,
