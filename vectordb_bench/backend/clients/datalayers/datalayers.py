@@ -16,11 +16,11 @@ from .config import DatalayersConfigDict, DatalayersIndexConfig
 log = logging.getLogger(__name__)
 
 # Number of partitions to create table
-DEFAULT_NUM_PARTITIONS: int = 1
+DEFAULT_NUM_PARTITIONS: int = 8
 # Batch size for inserting embeddings
-DEFAULT_LOAD_BATCH_SIZE: int = 50
+DEFAULT_LOAD_BATCH_SIZE: int = 1000
 # Default polling interval for index build task status (seconds)
-DEFAULT_POLL_INTERVAL_SECONDS: int = 2
+DEFAULT_POLL_INTERVAL_SECONDS: int = 1
 
 class Datalayers(VectorDB):
     """Use Datalayers HTTP SQL API"""
@@ -335,7 +335,8 @@ class Datalayers(VectorDB):
                 WITH (
                     MEMTABLE_SIZE=1024MB,
                     STORAGE_TYPE=LOCAL,
-                    UPDATE_MODE=APPEND
+                    UPDATE_MODE=APPEND,
+                    COMPACT_MODE=DISABLED
                 );
                 """
             )
