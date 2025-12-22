@@ -16,7 +16,7 @@ class DatalayersConfigDict(TypedDict):
 
 class DatalayersConfig(DBConfig):
     host: str = "localhost"
-    port: int = 8361
+    port: int = 8360
     username: str = "admin"
     password: SecretStr = "public"
     database: str = "vector_bench_db"
