@@ -106,7 +106,7 @@ oceanbase       = [ "mysql-connector-python" ]
 alisql          = [ "mysql-connector-python" ]
 doris           = [ "doris-vector-search" ]
 turbopuffer     = [ "turbopuffer" ]
-datalayers      = []
+datalayers      = [ "flightsql-dbapi==0.2.2", "pyarrow==17.0.0" ]
 
 [project.urls]
 "repository" = "https://github.com/zilliztech/VectorDBBench"
@@ -234,4 +234,3 @@ builtins-ignorelist = [
 "vectordb_bench/backend/clients/*" = ["PLC0415"]
 "vectordb_bench/cli/batch_cli.py" = ["PLC0415"]
 "vectordb_bench/backend/data_source.py" = ["PLC0415"]
-

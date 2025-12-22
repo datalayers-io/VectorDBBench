@@ -1,12 +1,13 @@
-"""Wrapper around the Datalayers vector database over VectorDB using HTTP SQL API"""
+"""Wrapper around the Datalayers vector database using Arrow Flight SQL."""
 
-import base64
-import http.client
-import json
 import logging
-from contextlib import contextmanager
+import os
 import time
+from contextlib import contextmanager
 from typing import Any
+
+import pyarrow.flight as flight
+from flightsql import FlightSQLClient
 
 from vectordb_bench.backend.filter import Filter, FilterOp
 
@@ -18,12 +19,12 @@ log = logging.getLogger(__name__)
 # Number of partitions to create table
 DEFAULT_NUM_PARTITIONS: int = 8
 # Batch size for inserting embeddings
-DEFAULT_LOAD_BATCH_SIZE: int = 1000
+DEFAULT_LOAD_BATCH_SIZE: int = 100
 # Default polling interval for index build task status (seconds)
 DEFAULT_POLL_INTERVAL_SECONDS: int = 1
 
 class Datalayers(VectorDB):
-    """Use Datalayers HTTP SQL API"""
+    """Use Datalayers Arrow Flight SQL API."""
 
     supported_filter_types: list[FilterOp] = [
         FilterOp.NonFilter,
@@ -58,17 +59,9 @@ class Datalayers(VectorDB):
         self._pk_col = "id"
         self._vec_col = "embedding"
         self._label_col = "labels"
-        self._sql_path = "/api/v1/sql"
         self._where_clause = ""
-        auth_token = base64.b64encode(
-            f"{self.db_config['username']}:{self.db_config['password']}".encode("utf-8")
-        ).decode("utf-8")
-        self._headers = {
-            "Content-Type": "application/binary",
-            "Authorization": f"Basic {auth_token}",
-        }
 
-        self.conn: http.client.HTTPConnection | None = self._create_client()
+        self.conn: FlightSQLClient | None = self._create_client()
 
         if drop_old:
             self._drop_table()
@@ -236,60 +229,67 @@ class Datalayers(VectorDB):
 
             time.sleep(DEFAULT_POLL_INTERVAL_SECONDS)
 
-    def _create_client(self) -> http.client.HTTPConnection:
-        return http.client.HTTPConnection(
-            host=self.db_config["host"],
-            port=self.db_config["port"],
-        )
+    def _create_client(self) -> FlightSQLClient:
+        # Avoid proxy interference for local FlightSQL connections.
+        if self.db_config["host"] in ("localhost", "127.0.0.1"):
+            for key in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
+                os.environ.pop(key, None)
+            no_proxy = os.environ.get("NO_PROXY", "")
+            if "localhost" not in no_proxy or "127.0.0.1" not in no_proxy:
+                combined = ",".join(filter(None, [no_proxy, "localhost", "127.0.0.1"]))
+                os.environ["NO_PROXY"] = combined
+                os.environ["no_proxy"] = combined
 
-    def _post_sql(self, sql: str) -> http.client.HTTPResponse:
-        assert self.conn is not None, "Connection is not initialized"
-        self.conn.request(
-            method="POST",
-            url=self._sql_path,
-            headers=self._headers,
-            body=sql.encode("utf-8"),
-        )
-        return self.conn.getresponse()
+        location = f"grpc+tcp://{self.db_config['host']}:{self.db_config['port']}"
+        flight_client = flight.FlightClient(location)
+
+        headers = [
+            flight_client.authenticate_basic_token(
+                self.db_config["username"],
+                self.db_config["password"],
+            )
+        ]
+        headers.append((b"database", self.db_config["database"].encode("utf-8")))
+
+        flight_sql_client = FlightSQLClient.__new__(FlightSQLClient)
+        flight_sql_client.client = flight_client
+        flight_sql_client.headers = headers
+        flight_sql_client.features = {}
+        flight_sql_client.closed = False
+        return flight_sql_client
 
     def _execute(self, sql: str) -> dict[str, list] | None:
         assert self.conn is not None, "Connection is not initialized"
-        response = self._post_sql(sql)
-        body = response.read()
 
-        if response.status != 200:
-            detail = ""
-            try:
-                detail = body.decode("utf-8")
-            except Exception:  # noqa: BLE001
-                detail = str(body)
-            raise RuntimeError(
-                f"Datalayers HTTP request failed ({response.status} {response.reason}): {detail}"
-            )
-
-        if not body:
+        if self._is_update_sql(sql):
+            self.conn.execute_update(sql, None)
             return None
 
-        try:
-            data = json.loads(body.decode("utf-8"))
-        except json.JSONDecodeError:
-            log.warning("Datalayers failed to decode JSON response")
+        flight_info = self.conn.execute(sql)
+        if not flight_info.endpoints:
+            return {"columns": [], "rows": []}
+
+        ticket = flight_info.endpoints[0].ticket
+        reader = self.conn.do_get(ticket)
+        table = reader.read_all()
+        if table is None:
             return None
 
-        result = data.get("result")
-        if not isinstance(result, dict):
-            return None
+        columns = table.schema.names
+        if table.num_rows == 0:
+            return {"columns": columns, "rows": []}
 
-        columns_raw = result.get("columns") or []
-        values = result.get("values") or []
+        column_values = [table.column(i).to_pylist() for i in range(table.num_columns)]
+        rows = [list(row) for row in zip(*column_values)]
+        return {"columns": columns, "rows": rows}
 
-        columns: list[str] = []
-        if columns_raw:
-            if isinstance(columns_raw[0], dict):
-                columns = [col.get("name") for col in columns_raw]
-            elif isinstance(columns_raw, list):
-                columns = columns_raw
-        return {"columns": columns, "rows": values}
+    def _is_query_sql(self, sql: str) -> bool:
+        stmt = sql.strip().upper()
+        return stmt.startswith(("SELECT", "SHOW", "WITH"))
+
+    def _is_update_sql(self, sql: str) -> bool:
+        stmt = sql.strip().upper()
+        return stmt.startswith(("INSERT", "DELETE"))
 
     def _drop_table(self):
         assert self.conn is not None, "Connection is not initialized"
@@ -336,7 +336,7 @@ class Datalayers(VectorDB):
                     MEMTABLE_SIZE=1024MB,
                     STORAGE_TYPE=LOCAL,
                     UPDATE_MODE=APPEND,
-                    COMPACT_MODE=DISABLED
+                    COMPACT_MODE=DISABLE
                 );
                 """
             )
