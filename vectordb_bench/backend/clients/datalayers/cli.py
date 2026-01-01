@@ -15,11 +15,15 @@ from .config import DatalayersIndexConfig
 
 
 class DatalayersConnectionTypedDict(CommonTypedDict):
-    password: Annotated[str, click.option("--password", type=str, default="public", help="DB password", show_default=True)]
+    password: Annotated[
+        str, click.option("--password", type=str, default="public", help="DB password", show_default=True)
+    ]
     host: Annotated[str, click.option("--host", type=str, default="localhost", help="DB host", show_default=True)]
     port: Annotated[int, click.option("--port", type=int, default=8360, help="DB Port", show_default=True)]
     username: Annotated[str, click.option("--username", type=str, default="admin", help="DB user", show_default=True)]
-    database: Annotated[str, click.option("--database", type=str, help="DataBase name", default="vector_bench_db", show_default=True)]
+    database: Annotated[
+        str, click.option("--database", type=str, help="DataBase name", default="vector_bench_db", show_default=True)
+    ]
 
 
 class DatalayersIndexTypedDict(CommonTypedDict):
@@ -37,6 +41,7 @@ class DatalayersIndexTypedDict(CommonTypedDict):
         ),
     ]
 
+
 _index_type_mapping = {
     "FLAT": IndexType.Flat,
     "IVF_FLAT": IndexType.IVFFlat,
@@ -46,8 +51,8 @@ _index_type_mapping = {
     "IVF_HNSW": IndexType.IVF_HNSW,
 }
 
-class DatalayersTypedDict(DatalayersConnectionTypedDict, DatalayersIndexTypedDict):
-    ...
+
+class DatalayersTypedDict(DatalayersConnectionTypedDict, DatalayersIndexTypedDict): ...
 
 
 @cli.command()
