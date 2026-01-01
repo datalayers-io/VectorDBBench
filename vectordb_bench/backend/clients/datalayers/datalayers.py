@@ -6,8 +6,10 @@ import time
 from contextlib import contextmanager
 from typing import Any
 
+import pyarrow as pa
 import pyarrow.flight as flight
 from flightsql import FlightSQLClient
+from flightsql.client import PreparedStatement
 
 from vectordb_bench.backend.filter import Filter, FilterOp
 
@@ -22,6 +24,7 @@ DEFAULT_NUM_PARTITIONS: int = 8
 DEFAULT_LOAD_BATCH_SIZE: int = 100
 # Default polling interval for index build task status (seconds)
 DEFAULT_POLL_INTERVAL_SECONDS: int = 1
+
 
 class Datalayers(VectorDB):
     """Use Datalayers Arrow Flight SQL API."""
@@ -60,6 +63,12 @@ class Datalayers(VectorDB):
         self._vec_col = "embedding"
         self._label_col = "labels"
         self._where_clause = ""
+        # Use a fixed-size Arrow list to match VECTOR(dim) for embeddings.
+        self._embedding_type = pa.list_(pa.float32(), self.dim)
+        self._insert_stmt: PreparedStatement | None = None
+        self._insert_sql: str | None = None
+        self._search_stmt: PreparedStatement | None = None
+        self._search_sql: str | None = None
 
         self.conn: FlightSQLClient | None = self._create_client()
 
@@ -70,6 +79,7 @@ class Datalayers(VectorDB):
         if self.conn:
             self.conn.close()
             self.conn = None
+        self._close_prepared()
 
     @contextmanager
     def init(self):
@@ -78,6 +88,7 @@ class Datalayers(VectorDB):
         try:
             yield
         finally:
+            self._close_prepared()
             if self.conn:
                 self.conn.close()
             self.conn = None
@@ -96,28 +107,31 @@ class Datalayers(VectorDB):
                 raise ValueError("labels_data length must match metadata length when provided")
 
             insert_count = 0
+            columns = [self._pk_col]
+            if labels_data is not None:
+                columns.append(self._label_col)
+            columns.append(self._vec_col)
+            placeholders = ", ".join(["?"] * len(columns))
+            sql = (
+                f"INSERT INTO {self.db_config['database']}.{self.table_name} "
+                f"({', '.join(columns)}) VALUES ({placeholders})"
+            )
+
+            prepared_stmt = self._get_insert_stmt(sql)
             # Insert in batches
             for batch_start in range(0, len(embeddings), self.load_batch_size):
                 batch_end = min(batch_start + self.load_batch_size, len(embeddings))
-                values = []
-                columns = [self._pk_col]
-                if labels_data is not None:
-                    columns.append(self._label_col)
-                columns.append(self._vec_col)
-                for i in range(batch_start, batch_end):
-                    emb_str = "[" + ", ".join(map(str, embeddings[i])) + "]"
-                    row_values = [str(metadata[i])]
-                    if labels_data is not None:
-                        # Escape single quotes to avoid breaking the SQL literal
-                        label_val = labels_data[i].replace("'", "''")
-                        row_values.append(f"'{label_val}'")
-                    row_values.append(emb_str)
-                    values.append(f"({', '.join(row_values)})")
-                self._execute(
-                    f"INSERT INTO {self.db_config['database']}.{self.table_name} "
-                    f"({', '.join(columns)}) VALUES {', '.join(values)}"
+                batch_embeddings = embeddings[batch_start:batch_end]
+                batch_metadata = metadata[batch_start:batch_end]
+                batch_labels = labels_data[batch_start:batch_end] if labels_data is not None else None
+
+                binding = self._make_insert_binding(
+                    batch_embeddings,
+                    batch_metadata,
+                    batch_labels,
                 )
-                insert_count += len(values)
+                self._execute_prepared(prepared_stmt, binding)
+                insert_count += len(batch_metadata)
             return insert_count, None
         except Exception as e:  # noqa: BLE001
             log.warning(
@@ -134,17 +148,18 @@ class Datalayers(VectorDB):
     ) -> list[int]:
         assert self.conn is not None, "Connection is not initialized"
         try:
-            vector_literal = "[" + ", ".join(map(str, query)) + "]"
             where_clause = self._where_clause
 
             sql = (
                 f"SELECT {self._pk_col} "
                 f"FROM {self.db_config['database']}.{self.table_name} "
                 f"{where_clause} "
-                f"ORDER BY {self.search_param['metric_func']}({self._vec_col}, {vector_literal}) "
+                f"ORDER BY {self.search_param['metric_func']}({self._vec_col}, ?) "
                 f"LIMIT {k}"
             )
-            result = self._execute(sql)
+            prepared_stmt = self._get_search_stmt(sql)
+            binding = self._make_query_binding(query)
+            result = self._execute_prepared(prepared_stmt, binding)
             if result is None or not result["rows"]:
                 return []
 
@@ -205,11 +220,7 @@ class Datalayers(VectorDB):
                 )
                 return
 
-            build_rows = [
-                row
-                for row in tasks["rows"]
-                if str(row[type_idx]).lower() == "build_index"
-            ]
+            build_rows = [row for row in tasks["rows"] if str(row[type_idx]).lower() == "build_index"]
             if not build_rows:
                 log.warning("SHOW TASKS does not contain build_index task info")
                 return
@@ -283,6 +294,55 @@ class Datalayers(VectorDB):
         rows = [list(row) for row in zip(*column_values)]
         return {"columns": columns, "rows": rows}
 
+    def _execute_prepared(self, prepared_stmt: PreparedStatement, binding: pa.RecordBatch) -> dict[str, list] | None:
+        assert self.conn is not None, "Connection is not initialized"
+
+        flight_info = prepared_stmt.execute(binding)
+        if not flight_info.endpoints:
+            return {"columns": [], "rows": []}
+
+        ticket = flight_info.endpoints[0].ticket
+        reader = self.conn.do_get(ticket)
+        table = reader.read_all()
+        if table is None:
+            return None
+
+        columns = table.schema.names
+        if table.num_rows == 0:
+            return {"columns": columns, "rows": []}
+
+        column_values = [table.column(i).to_pylist() for i in range(table.num_columns)]
+        rows = [list(row) for row in zip(*column_values)]
+        return {"columns": columns, "rows": rows}
+
+    def _get_insert_stmt(self, sql: str) -> PreparedStatement:
+        assert self.conn is not None, "Connection is not initialized"
+        if self._insert_stmt is None or self._insert_sql != sql:
+            if self._insert_stmt is not None:
+                self._insert_stmt.close()
+            self._insert_stmt = self.conn.prepare(sql)
+            self._insert_sql = sql
+        return self._insert_stmt
+
+    def _get_search_stmt(self, sql: str) -> PreparedStatement:
+        assert self.conn is not None, "Connection is not initialized"
+        if self._search_stmt is None or self._search_sql != sql:
+            if self._search_stmt is not None:
+                self._search_stmt.close()
+            self._search_stmt = self.conn.prepare(sql)
+            self._search_sql = sql
+        return self._search_stmt
+
+    def _close_prepared(self) -> None:
+        if self._insert_stmt is not None:
+            self._insert_stmt.close()
+        if self._search_stmt is not None:
+            self._search_stmt.close()
+        self._insert_stmt = None
+        self._insert_sql = None
+        self._search_stmt = None
+        self._search_sql = None
+
     def _is_query_sql(self, sql: str) -> bool:
         stmt = sql.strip().upper()
         return stmt.startswith(("SELECT", "SHOW", "WITH"))
@@ -290,6 +350,27 @@ class Datalayers(VectorDB):
     def _is_update_sql(self, sql: str) -> bool:
         stmt = sql.strip().upper()
         return stmt.startswith(("INSERT", "DELETE"))
+
+    def _make_insert_binding(
+        self,
+        embeddings: list[list[float]],
+        metadata: list[int],
+        labels_data: list[str] | None,
+    ) -> pa.RecordBatch:
+        columns = [self._pk_col]
+        arrays = [pa.array(metadata, type=pa.int32())]
+        if labels_data is not None:
+            columns.append(self._label_col)
+            arrays.append(pa.array(labels_data, type=pa.string()))
+        columns.append(self._vec_col)
+        arrays.append(pa.array(embeddings, type=self._embedding_type))
+
+        return pa.RecordBatch.from_arrays(arrays, columns)
+
+    def _make_query_binding(self, query: list[float]) -> pa.RecordBatch:
+        values = pa.array(query, type=pa.float32())
+        array = pa.FixedSizeListArray.from_arrays(values, list_size=len(query), type=self._embedding_type)
+        return pa.RecordBatch.from_arrays([array], [self._vec_col])
 
     def _drop_table(self):
         assert self.conn is not None, "Connection is not initialized"
@@ -319,8 +400,7 @@ class Datalayers(VectorDB):
                     f"WITH (TYPE={self.index_param['index_type']}, DISTANCE={self.index_param['metric']}),"
                 )
 
-            sql = (
-                f"""
+            sql = f"""
                 CREATE TABLE IF NOT EXISTS `{self.db_config["database"]}`.`{self.table_name}` (
                     `{self._ts_col}` TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     `{self._pk_col}` INT32 NOT NULL,
@@ -339,7 +419,6 @@ class Datalayers(VectorDB):
                     COMPACT_MODE=DISABLE
                 );
                 """
-            )
             log.info(f"Datalayers create table {self.table_name} with sql: {sql}")
 
             self._execute(sql)
