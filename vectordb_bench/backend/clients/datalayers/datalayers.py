@@ -369,7 +369,7 @@ class Datalayers(VectorDB):
 
     def _make_query_binding(self, query: list[float]) -> pa.RecordBatch:
         values = pa.array(query, type=pa.float32())
-        array = pa.FixedSizeListArray.from_arrays(values, list_size=len(query), type=self._embedding_type)
+        array = pa.FixedSizeListArray.from_arrays(values, type=self._embedding_type)
         return pa.RecordBatch.from_arrays([array], [self._vec_col])
 
     def _drop_table(self):
