@@ -148,12 +148,18 @@ class Datalayers(VectorDB):
     ) -> list[int]:
         assert self.conn is not None, "Connection is not initialized"
         try:
-            where_clause = self._where_clause
+            where_conditions = []
+            if self._where_clause:
+                where_conditions.append(self._where_clause.removeprefix("WHERE ").strip())
+            query_params = self._query_parameters_clause()
+            if query_params:
+                where_conditions.append(query_params)
+            where_clause = f"WHERE {' AND '.join(where_conditions)} " if where_conditions else ""
 
             sql = (
                 f"SELECT {self._pk_col} "
                 f"FROM {self.db_config['database']}.{self.table_name} "
-                f"{where_clause} "
+                f"{where_clause}"
                 f"ORDER BY {self.search_param['metric_func']}({self._vec_col}, ?) "
                 f"LIMIT {k}"
             )
@@ -169,6 +175,17 @@ class Datalayers(VectorDB):
         except Exception as e:  # noqa: BLE001
             log.warning("Failed to search Datalayers table (%s), error: %s", self.table_name, e)
             return []
+
+    def _query_parameters_clause(self) -> str:
+        params = [
+            f"{key}={value}"
+            for key, value in self.search_param.items()
+            if key != "metric_func" and value is not None and value > 0
+        ]
+        if not params:
+            return ""
+        args = ", ".join(f"'{param}'" for param in params)
+        return f"parameters({args})"
 
     def prepare_filter(self, filters: Filter):
         if filters.type == FilterOp.NonFilter:
@@ -395,9 +412,26 @@ class Datalayers(VectorDB):
 
             index_statement = ""
             if self.index_param["index_type"] != "NONE" and self.index_param["index_type"] != "FLAT":
+                index_options = [
+                    f"TYPE={self.index_param['index_type']}",
+                    f"DISTANCE={self.index_param['metric']}",
+                ]
+                option_names = {
+                    "num_cells": "NUM_CELLS",
+                    "num_sub_vectors": "NUM_SUB_VECTORS",
+                    "num_bits": "NUM_BITS",
+                    "max_level": "MAX_LEVEL",
+                    "m": "M",
+                    "ef_construction": "EF_CONSTRUCTION",
+                }
+                for param_name, option_name in option_names.items():
+                    value = self.index_param.get(param_name)
+                    if value is not None and value > 0:
+                        index_options.append(f"{option_name}={value}")
+
                 index_statement = (
                     f"VECTOR INDEX `{self._index_name}`(`{self._vec_col}`) "
-                    f"WITH (TYPE={self.index_param['index_type']}, DISTANCE={self.index_param['metric']}),"
+                    f"WITH ({', '.join(index_options)}),"
                 )
 
             sql = f"""

@@ -33,6 +33,8 @@ class IndexType(StrEnum):
     IVFSQ8 = "IVF_SQ8"
     IVF_RABITQ = "IVF_RABITQ"
     IVF_HNSW = "IVF_HNSW"
+    HNSW_RQ = "HNSW_RQ"
+    IVF_HNSW_RQ = "IVF_HNSW_RQ"
     Flat = "FLAT"
     AUTOINDEX = "AUTOINDEX"
     FTS = "FTS"

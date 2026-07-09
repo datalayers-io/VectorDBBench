@@ -35,18 +35,45 @@ class DatalayersIndexConfig(BaseModel, DBCaseConfig):
 
     metric_type: MetricType | None = None
     index: IndexType = IndexType.NONE
+    num_cells: int = 0
+    num_sub_vectors: int = 0
+    num_bits: int = 0
+    max_level: int = 0
+    m: int = 0
+    ef_construction: int = 0
+    ef: int = 0
+    nprobes: int = 0
+    refine_factor: int = 0
 
     def index_param(self) -> dict:
         params = {
             "metric": self._parse_metric(),
             "index_type": self._parse_index(),
         }
+        if self.num_cells > 0:
+            params["num_cells"] = self.num_cells
+        if self.num_sub_vectors > 0:
+            params["num_sub_vectors"] = self.num_sub_vectors
+        if self.num_bits > 0:
+            params["num_bits"] = self.num_bits
+        if self.max_level > 0:
+            params["max_level"] = self.max_level
+        if self.m > 0:
+            params["m"] = self.m
+        if self.ef_construction > 0:
+            params["ef_construction"] = self.ef_construction
         return params
 
     def search_param(self) -> dict:
         params = {
             "metric_func": self._parse_metric_func(),
         }
+        if self.ef > 0:
+            params["ef"] = self.ef
+        if self.nprobes > 0:
+            params["nprobes"] = self.nprobes
+        if self.refine_factor > 0:
+            params["refine_factor"] = self.refine_factor
         return params
 
     def _parse_metric(self) -> str:
@@ -80,8 +107,12 @@ class DatalayersIndexConfig(BaseModel, DBCaseConfig):
             return "IVF_RQ"
         if self.index == IndexType.HNSW:
             return "HNSW"
+        if self.index == IndexType.HNSW_RQ:
+            return "HNSW_RQ"
         if self.index == IndexType.IVF_HNSW:
             return "IVF_HNSW"
+        if self.index == IndexType.IVF_HNSW_RQ:
+            return "IVF_HNSW_RQ"
         if self.index == IndexType.NONE:
             return "NONE"
         msg = f"Index type {self.index} is not supported for Datalayers!"

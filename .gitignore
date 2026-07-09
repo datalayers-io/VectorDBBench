@@ -19,3 +19,13 @@ vectordb_bench/results/cloudleaderboard/
 # AI rules
 CLAUDE.md
 AGENTS.md
+
+# datalayers
+results/
+logs/
+autoindex/
+hnsw/
+ivfpq/
+ivfrq/
+*.log
+*.out
