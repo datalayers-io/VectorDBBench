@@ -38,8 +38,10 @@ class DatalayersIndexTypedDict(CommonTypedDict):
                     "IVF_FLAT",
                     "IVF_PQ",
                     "IVF_RQ",
+                    "HNSW_PQ",
                     "HNSW_RQ",
                     "IVF_HNSW",
+                    "IVF_HNSW_PQ",
                     "IVF_HNSW_RQ",
                 ],
                 case_sensitive=False,
@@ -139,6 +141,19 @@ class DatalayersIndexTypedDict(CommonTypedDict):
             help="Datalayers refine factor, unset = disable exact refinement",
         ),
     ]
+    filter_mode: Annotated[
+        str,
+        click.option(
+            "--filter-mode",
+            type=str,
+            default="",
+            show_default=True,
+            help=(
+                "Datalayers filtered search parameter filter_mode: "
+                "auto | auto(threshold) | prefilter | iterative, unset = use Datalayers default"
+            ),
+        ),
+    ]
 
 
 _index_type_mapping = {
@@ -147,8 +162,10 @@ _index_type_mapping = {
     "IVF_PQ": IndexType.IVFPQ,
     "IVF_RQ": IndexType.IVF_RABITQ,
     "HNSW": IndexType.HNSW,
+    "HNSW_PQ": IndexType.HNSW_PQ,
     "HNSW_RQ": IndexType.HNSW_RQ,
     "IVF_HNSW": IndexType.IVF_HNSW,
+    "IVF_HNSW_PQ": IndexType.IVF_HNSW_PQ,
     "IVF_HNSW_RQ": IndexType.IVF_HNSW_RQ,
 }
 
@@ -185,6 +202,7 @@ def Datalayers(**parameters: Unpack[DatalayersTypedDict]):
             ef=parameters["ef"],
             nprobes=parameters["nprobes"],
             refine_factor=parameters["refine_factor"],
+            filter_mode=parameters["filter_mode"],
         ),
         **parameters,
     )

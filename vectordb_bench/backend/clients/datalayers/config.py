@@ -44,6 +44,7 @@ class DatalayersIndexConfig(BaseModel, DBCaseConfig):
     ef: int = 0
     nprobes: int = 0
     refine_factor: int = 0
+    filter_mode: str = ""
 
     def index_param(self) -> dict:
         params = {
@@ -74,6 +75,8 @@ class DatalayersIndexConfig(BaseModel, DBCaseConfig):
             params["nprobes"] = self.nprobes
         if self.refine_factor > 0:
             params["refine_factor"] = self.refine_factor
+        if self.filter_mode:
+            params["filter_mode"] = self.filter_mode
         return params
 
     def _parse_metric(self) -> str:
@@ -107,10 +110,14 @@ class DatalayersIndexConfig(BaseModel, DBCaseConfig):
             return "IVF_RQ"
         if self.index == IndexType.HNSW:
             return "HNSW"
+        if self.index == IndexType.HNSW_PQ:
+            return "HNSW_PQ"
         if self.index == IndexType.HNSW_RQ:
             return "HNSW_RQ"
         if self.index == IndexType.IVF_HNSW:
             return "IVF_HNSW"
+        if self.index == IndexType.IVF_HNSW_PQ:
+            return "IVF_HNSW_PQ"
         if self.index == IndexType.IVF_HNSW_RQ:
             return "IVF_HNSW_RQ"
         if self.index == IndexType.NONE:

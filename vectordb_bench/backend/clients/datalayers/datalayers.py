@@ -2,7 +2,6 @@
 
 import logging
 import os
-import time
 from contextlib import contextmanager
 from typing import Any
 
@@ -22,12 +21,14 @@ log = logging.getLogger(__name__)
 DEFAULT_NUM_PARTITIONS: int = 8
 # Batch size for inserting embeddings
 DEFAULT_LOAD_BATCH_SIZE: int = 100
-# Default polling interval for index build task status (seconds)
-DEFAULT_POLL_INTERVAL_SECONDS: int = 1
 
 
 class Datalayers(VectorDB):
     """Use Datalayers Arrow Flight SQL API."""
+
+    # FlightSQLClient and cached prepared statements are shared by the load runner
+    # when a backend is marked thread-safe. Datalayers inserts must be serialized.
+    thread_safe: bool = False
 
     supported_filter_types: list[FilterOp] = [
         FilterOp.NonFilter,
@@ -177,11 +178,7 @@ class Datalayers(VectorDB):
             return []
 
     def _query_parameters_clause(self) -> str:
-        params = [
-            f"{key}={value}"
-            for key, value in self.search_param.items()
-            if key != "metric_func" and value is not None and value > 0
-        ]
+        params = [f"{key}={value}" for key, value in self.search_param.items() if key != "metric_func"]
         if not params:
             return ""
         args = ", ".join(f"'{param}'" for param in params)
@@ -206,56 +203,50 @@ class Datalayers(VectorDB):
             self._execute(sql)
         except Exception as e:  # noqa: BLE001
             log.warning("Failed to flush Datalayers table (%s), error: %s", self.table_name, e)
+            raise e from None
+
+        if self.index_param["index_type"] in ("NONE", "FLAT"):
             return
 
-        self._wait_for_index_build_tasks()
+        try:
+            table = f"{self.db_config['database']}.{self.table_name}"
+            create_sql = (
+                f"CREATE VECTOR INDEX IF NOT EXISTS `{self._index_name}` "
+                f"ON {table} (`{self._vec_col}`) "
+                f"WITH ({', '.join(self._index_options())})"
+            )
+            log.info("Datalayers create vector index with sql: %s", create_sql)
+            self._execute(create_sql)
 
-    def _wait_for_index_build_tasks(self) -> None:
-        """Polls task status until build_index tasks finish."""
-        while True:
-            try:
-                tasks = self._execute("SHOW TASKS")
-            except Exception as e:  # noqa: BLE001
-                log.warning(
-                    "Failed to fetch Datalayers tasks while waiting for index build: %s",
-                    e,
-                )
-                return
+            refresh_sql = f"REFRESH INDEX `{self._index_name}` ON {table} SYNC"
+            log.info("Datalayers refresh vector index with sql: %s", refresh_sql)
+            self._execute(refresh_sql)
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "Failed to build vector index on Datalayers table (%s), error: %s",
+                self.table_name,
+                e,
+            )
+            raise e from None
 
-            if tasks is None or not tasks["rows"]:
-                log.warning("SHOW TASKS returned no data while waiting for index build")
-                return
-
-            col_map = {col.lower(): idx for idx, col in enumerate(tasks["columns"])}
-            type_idx = col_map.get("type")
-            running_idx = col_map.get("running")
-            pending_idx = col_map.get("pending")
-            if type_idx is None or running_idx is None or pending_idx is None:
-                log.warning(
-                    "SHOW TASKS returned unexpected columns while waiting for index build: %s",
-                    tasks["columns"],
-                )
-                return
-
-            build_rows = [row for row in tasks["rows"] if str(row[type_idx]).lower() == "build_index"]
-            if not build_rows:
-                log.warning("SHOW TASKS does not contain build_index task info")
-                return
-
-            first_row = build_rows[0]
-            try:
-                running = int(first_row[running_idx])
-            except Exception:
-                running = 0
-            try:
-                pending = int(first_row[pending_idx])
-            except Exception:
-                pending = 0
-
-            if running == 0 and pending == 0:
-                return
-
-            time.sleep(DEFAULT_POLL_INTERVAL_SECONDS)
+    def _index_options(self) -> list[str]:
+        index_options = [
+            f"TYPE={self.index_param['index_type']}",
+            f"DISTANCE={self.index_param['metric']}",
+        ]
+        option_names = {
+            "num_cells": "NUM_CELLS",
+            "num_sub_vectors": "NUM_SUB_VECTORS",
+            "num_bits": "NUM_BITS",
+            "max_level": "MAX_LEVEL",
+            "m": "M",
+            "ef_construction": "EF_CONSTRUCTION",
+        }
+        for param_name, option_name in option_names.items():
+            value = self.index_param.get(param_name)
+            if value is not None and value > 0:
+                index_options.append(f"{option_name}={value}")
+        return index_options
 
     def _create_client(self) -> FlightSQLClient:
         # Avoid proxy interference for local FlightSQL connections.
@@ -410,30 +401,6 @@ class Datalayers(VectorDB):
         try:
             self._execute(f'CREATE DATABASE IF NOT EXISTS {self.db_config["database"]}')
 
-            index_statement = ""
-            if self.index_param["index_type"] != "NONE" and self.index_param["index_type"] != "FLAT":
-                index_options = [
-                    f"TYPE={self.index_param['index_type']}",
-                    f"DISTANCE={self.index_param['metric']}",
-                ]
-                option_names = {
-                    "num_cells": "NUM_CELLS",
-                    "num_sub_vectors": "NUM_SUB_VECTORS",
-                    "num_bits": "NUM_BITS",
-                    "max_level": "MAX_LEVEL",
-                    "m": "M",
-                    "ef_construction": "EF_CONSTRUCTION",
-                }
-                for param_name, option_name in option_names.items():
-                    value = self.index_param.get(param_name)
-                    if value is not None and value > 0:
-                        index_options.append(f"{option_name}={value}")
-
-                index_statement = (
-                    f"VECTOR INDEX `{self._index_name}`(`{self._vec_col}`) "
-                    f"WITH ({', '.join(index_options)}),"
-                )
-
             sql = f"""
                 CREATE TABLE IF NOT EXISTS `{self.db_config["database"]}`.`{self.table_name}` (
                     `{self._ts_col}` TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -441,7 +408,6 @@ class Datalayers(VectorDB):
                     `{self._label_col}` STRING,
                     `{self._vec_col}` VECTOR({dim}),
                     TIMESTAMP KEY(`{self._ts_col}`),
-                    {index_statement}
                     PRIMARY KEY(`{self._pk_col}`, `{self._ts_col}`)
                 )
                 PARTITION BY HASH (`{self._pk_col}`) PARTITIONS {self.num_partitions}
