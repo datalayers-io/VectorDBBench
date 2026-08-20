@@ -5,6 +5,7 @@ from ..backend.clients.aws_opensearch.cli import AWSOpenSearch
 from ..backend.clients.chroma.cli import Chroma
 from ..backend.clients.clickhouse.cli import Clickhouse
 from ..backend.clients.cockroachdb.cli import CockroachDB as CockroachDBCli
+from ..backend.clients.datalayers.cli import Datalayers
 from ..backend.clients.doris.cli import Doris
 from ..backend.clients.elastic_cloud.cli import (
     ElasticCloudHNSW,

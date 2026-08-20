@@ -16,13 +16,18 @@ from .config import DatalayersIndexConfig
 
 class DatalayersConnectionTypedDict(CommonTypedDict):
     password: Annotated[
-        str, click.option("--password", type=str, default="public", help="DB password", show_default=True)
+        str, click.option("--password", type=str, default="public",
+                          help="DB password", show_default=True)
     ]
-    host: Annotated[str, click.option("--host", type=str, default="localhost", help="DB host", show_default=True)]
-    port: Annotated[int, click.option("--port", type=int, default=8360, help="DB Port", show_default=True)]
-    username: Annotated[str, click.option("--username", type=str, default="admin", help="DB user", show_default=True)]
+    host: Annotated[str, click.option(
+        "--host", type=str, default="localhost", help="DB host", show_default=True)]
+    port: Annotated[int, click.option(
+        "--port", type=int, default=8360, help="DB Port", show_default=True)]
+    username: Annotated[str, click.option(
+        "--username", type=str, default="admin", help="DB user", show_default=True)]
     database: Annotated[
-        str, click.option("--database", type=str, help="DataBase name", default="vector_bench_db", show_default=True)
+        str, click.option("--database", type=str, help="DataBase name",
+                          default="vector_bench_db", show_default=True)
     ]
 
 
@@ -32,18 +37,8 @@ class DatalayersIndexTypedDict(CommonTypedDict):
         click.option(
             "--index-type",
             type=click.Choice(
-                [
-                    "HNSW",
-                    "FLAT",
-                    "IVF_FLAT",
-                    "IVF_PQ",
-                    "IVF_RQ",
-                    "HNSW_PQ",
-                    "HNSW_RQ",
-                    "IVF_HNSW",
-                    "IVF_HNSW_PQ",
-                    "IVF_HNSW_RQ",
-                ],
+                ["HNSW", "FLAT", "IVF_FLAT", "IVF_PQ", "IVF_RQ",
+                    "IVF_HNSW", "HNSW_RQ", "IVF_HNSW_RQ"],
                 case_sensitive=False,
             ),
             default="FLAT",
@@ -165,12 +160,17 @@ _index_type_mapping = {
     "HNSW_PQ": IndexType.HNSW_PQ,
     "HNSW_RQ": IndexType.HNSW_RQ,
     "IVF_HNSW": IndexType.IVF_HNSW,
+    << << << < Updated upstream
     "IVF_HNSW_PQ": IndexType.IVF_HNSW_PQ,
+    == == == =
+    "HNSW_RQ": IndexType.HNSW_RQ,
+    >>>>>> > Stashed changes
     "IVF_HNSW_RQ": IndexType.IVF_HNSW_RQ,
 }
 
 
-class DatalayersTypedDict(DatalayersConnectionTypedDict, DatalayersIndexTypedDict): ...
+class DatalayersTypedDict(DatalayersConnectionTypedDict, DatalayersIndexTypedDict):
+    ...
 
 
 @cli.command()

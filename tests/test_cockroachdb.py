@@ -35,7 +35,7 @@ class TestCockroachDB:
             "db_name": "defaultdb",
             "table_name": "test_cockroachdb",
         }
-        
+
         # Note: sslmode=disable is handled in the client's connect_config options
 
         dim = 128

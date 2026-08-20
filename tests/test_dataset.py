@@ -7,6 +7,7 @@ from vectordb_bench.backend.data_source import DatasetSource
 
 log = logging.getLogger("vectordb_bench")
 
+
 class TestDataSet:
     def test_iter_dataset(self):
         for ds in Dataset:
@@ -29,6 +30,7 @@ class TestDataSet:
         cohere_10m.prepare()
 
         import time
+
         before = time.time()
         for i in cohere_10m:
             log.debug(i.head(1))
@@ -40,9 +42,11 @@ class TestDataSet:
     def test_iter_laion(self):
         laion_100m = Dataset.LAION.manager(100_000_000)
         from vectordb_bench.backend.data_source import DatasetSource
+
         laion_100m.prepare(source=DatasetSource.AliyunOSS)
 
         import time
+
         before = time.time()
         for i in laion_100m:
             log.debug(i.head(1))
@@ -74,4 +78,3 @@ class TestDataSet:
             files=files,
             local_ds_root=openai_50k.data_dir,
         )
-

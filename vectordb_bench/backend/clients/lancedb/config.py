@@ -23,7 +23,7 @@ class LanceDBIndexConfig(BaseModel, DBCaseConfig):
     """Default IVF_PQ index configuration."""
 
     index: IndexType = IndexType.IVFPQ
-    metric_type: MetricType = MetricType.L2
+    metric_type: MetricType = MetricType.COSINE
     num_partitions: int = 0
     num_sub_vectors: int = 0
     nbits: int = 8  # Must be 4 or 8

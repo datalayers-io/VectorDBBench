@@ -6,9 +6,9 @@ from contextlib import contextmanager
 from typing import Any
 
 import pyarrow as pa
-import pyarrow.flight as flight
 from flightsql import FlightSQLClient
 from flightsql.client import PreparedStatement
+from pyarrow import flight
 
 from vectordb_bench.backend.filter import Filter, FilterOp
 
@@ -134,7 +134,7 @@ class Datalayers(VectorDB):
                 self._execute_prepared(prepared_stmt, binding)
                 insert_count += len(batch_metadata)
             return insert_count, None
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.warning(
                 "Failed to insert data into Datalayers table (%s), error: %s",
                 self.table_name,
@@ -157,10 +157,18 @@ class Datalayers(VectorDB):
                 where_conditions.append(query_params)
             where_clause = f"WHERE {' AND '.join(where_conditions)} " if where_conditions else ""
 
+            # Optional refine_factor workaround for the cross-partition merge bug.
+            refine_factor = os.environ.get("DL_REFINE_FACTOR")
+            params_clause = ""
+            if refine_factor:
+                params_clause = f"WHERE parameters('refine_factor={refine_factor}') "
+                if where_clause:
+                    where_clause = where_clause.replace("WHERE ", "", 1)
+
             sql = (
                 f"SELECT {self._pk_col} "
                 f"FROM {self.db_config['database']}.{self.table_name} "
-                f"{where_clause}"
+                f"{params_clause}{where_clause} "
                 f"ORDER BY {self.search_param['metric_func']}({self._vec_col}, ?) "
                 f"LIMIT {k}"
             )
@@ -173,7 +181,7 @@ class Datalayers(VectorDB):
             columns = result["columns"]
             pk_idx = columns.index(self._pk_col) if self._pk_col in columns else 0
             return [int(row[pk_idx]) for row in result["rows"]]
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.warning("Failed to search Datalayers table (%s), error: %s", self.table_name, e)
             return []
 
@@ -199,9 +207,10 @@ class Datalayers(VectorDB):
 
     def optimize(self, data_size: int | None = None):
         try:
+            # Ensure all data is on disk before building the index.
             sql = f"FLUSH TABLE {self.db_config['database']}.{self.table_name} SYNC"
             self._execute(sql)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.warning("Failed to flush Datalayers table (%s), error: %s", self.table_name, e)
             raise e from None
 
@@ -386,7 +395,7 @@ class Datalayers(VectorDB):
         try:
             self._execute(f'DROP TABLE IF EXISTS {self.db_config["database"]}.{self.table_name}')
             log.info(f"Datalayers client drop table : {self.table_name}")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.warning(
                 "Failed to drop table %s.%s: %s",
                 self.db_config["database"],
@@ -423,6 +432,6 @@ class Datalayers(VectorDB):
 
             self._execute(sql)
 
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.warning("Failed to create Datalayers table: %s error: %s", self.table_name, e)
             raise e from None
